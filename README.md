@@ -8,7 +8,7 @@ It provides:
 
 - Process detection via WinAPI (no shell popups, no focus stealing)
 - Rule-based mapping through `game_mappings.lua`
-- Discord Detectable Applications fallback
+- Discord Detectable Applications fallback (cached)
 - Optional title pattern builder (prefix/suffix/custom pattern)
 - Automatic Twitch token refresh
 - Backporting of title/tags into your rules
@@ -45,6 +45,25 @@ Each rule can include:
 
 Unknown processes are added to `cfg.unknown` so you can quickly integrate them.
 
+### ✅ Optional Whitelist (Allowed Folders Only)
+You can optionally define a whitelist of **allowed folders**.  
+If the whitelist exists and contains at least one entry, the script will **ignore all processes outside these folders** (subfolders included).
+
+Example in `game_mappings.lua`:
+
+```lua
+cfg.whitelist = {
+    "C:/Program Files/Steam/",
+    "C:/Program Files (x86)/Epic Games/",
+    -- add more roots here...
+}
+```
+
+Notes:
+- Paths are compared case-insensitively.
+- Backslashes are normalized automatically, so `C:\Steam\` works too.
+- If `cfg.whitelist` is empty or missing, everything is allowed (default behavior).
+
 ### 🔍 Discord Detectable Applications Fallback
 If no rule matches:
 
@@ -52,6 +71,10 @@ If no rule matches:
 2. Performs fuzzy matching
 3. Auto-generates new rules
 4. Saves them into your mapping file
+
+**Caching behavior:**
+- The **first run per OBS session** can take a bit longer because the Discord detectable apps list is fetched and cached.
+- The cache is refreshed roughly **once per hour**, so you may see a similar “longer first run” again after that. (You can change that avlue in the script if you want to)
 
 ### 📝 Title Pattern Support
 Supports placeholders:
@@ -200,25 +223,10 @@ https://api.twitch.tv/helix/users?login=YOUR_USERNAME
 | Twitch Refresh Token | `refresh_token` |
 | Twitch Broadcaster ID | Your numeric Twitch ID |
 | Auto Polling | Enables automatic detection loop |
-| Polling Interval | Recommended 3000–5000 ms |
+| Polling Interval | Interval in milliseconds |
+| Log Level | Controls how verbose the script logs |
 | Title Pattern Options | Prefix/suffix/delimiter/pattern builder |
 | Backport Settings | Writes live data back to mappings |
-
----
-
-## 📁 About `game_mappings.lua`
-
-Contains:
-
-- `cfg.global_tags`  
-- `cfg.just_chatting`  
-- `cfg.unknown` (auto-generated)  
-- `cfg.rules` (your detection rules)
-
-⚠️ **When the script saves mappings, these sections are fully rewritten.**  
-Do **not** place comments inside those blocks.
-
-Comments above them are safe.
 
 ---
 
@@ -230,13 +238,34 @@ Runs detection + Twitch update exactly once.
 ### Auto Polling
 Runs repeatedly at the defined interval.
 
-Recommended:
+**Recommended for stability and to avoid stressing either OBS or the Twitch/Discord APIs:**
 ```
 Auto Polling: ON
-Interval: 3000–5000 ms
+Interval: >= 5000 ms (5 seconds or more)
+Log Level: Error
 ```
 
+You can temporarily raise log level to Info/Debug/Trace for troubleshooting, but for normal use **Error** is the sweet spot.
+
 ---
+
+## 📁 About `game_mappings.lua`
+
+Contains:
+
+- `cfg.global_tags`  
+- `cfg.just_chatting`  
+- `cfg.unknown` (auto-generated)  
+- `cfg.rules` (your detection rules)
+- `cfg.whitelist` (optional allowed-folder filter)
+
+⚠️ **When the script saves mappings, these sections are fully rewritten.**  
+Do **not** place comments inside those blocks.
+
+Comments above or between them are safe.
+
+---
+   
 
 ## 📝 Changelog (Excerpt)
 
@@ -244,6 +273,7 @@ Interval: 3000–5000 ms
 2025.11.18    M.Stahl    - Initial version
 2025.11.19    M.Stahl    - Added fuzzy search + unicode-safe Twitch name handling
 2025.11.20    M.Stahl    - Added title pattern options, tooltips, and full header documentation
+2025.11.21    M.Stahl    - Added optional whitelist + improved log levels
 ```
 
 ---

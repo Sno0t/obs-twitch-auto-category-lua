@@ -567,6 +567,7 @@ local LOG_OFF   = 0
 local LOG_ERROR = 1
 local LOG_INFO  = 2
 local LOG_DEBUG = 3
+local LOG_TRACE = 4
 
 local log_level = LOG_INFO
 
@@ -576,6 +577,8 @@ local function log(lvl, msg)
 
     local severity = obs.LOG_INFO
     if lvl == LOG_ERROR then severity = obs.LOG_ERROR end
+	if lvl == LOG_DEBUG then severity = obs.LOG_DEBUG end
+	if lvl == LOG_TRACE then severity = obs.LOG_DEBUG end	
 
     obs.script_log(severity, "[AutoCategory] " .. msg)
 end
@@ -908,6 +911,14 @@ cfg.ignore_exact = {
 	"wuaucltcore.exe",
 }
 
+-- If whitelist is filled, ONLY processes inside these folders are considered.
+-- Subfolders are included automatically.
+cfg.whitelist = {
+    -- "C:/Program Files/Steam/",
+    -- "C:/Program Files (x86)/Epic Games/",
+}
+
+
 -- If you have multiple tasks that share the same prefix, you dont have to add them individually but rather add the prefix here
 cfg.ignore_prefix = {
     "system",
@@ -918,6 +929,13 @@ cfg.ignore_prefix = {
     "PowerToys",
 	"AM_Delta_Patch",
 }
+
+																			  
+										 
+				 
+								 
+											
+ 
 
 -- Sets what will be displayed when we're in "just chatting"
 cfg.just_chatting = {
@@ -1005,7 +1023,7 @@ local function load_mappings()
         return
     end
 
-    log(LOG_INFO, "Loading mapping file: " .. map_file_path)
+    log(LOG_DEBUG, "Loading mapping file: " .. map_file_path)
     local ok, cfg = pcall(dofile, map_file_path)
     if not ok then
         log(LOG_ERROR, "Failed to load mapping file: " .. tostring(cfg))
@@ -1017,6 +1035,7 @@ local function load_mappings()
     mappings.global_tags   = mappings.global_tags   or {}
     mappings.ignore_exact  = mappings.ignore_exact  or {}
     mappings.ignore_prefix = mappings.ignore_prefix or {}
+    mappings.whitelist     = mappings.whitelist     or {}
     mappings.just_chatting = mappings.just_chatting or {
         twitch_game_name = "Just Chatting",
         title = "Just chatting",
@@ -1032,7 +1051,7 @@ end
 
 local function save_mappings()
     if not mappings then return end
-    log(LOG_INFO, "Saving mapping file (only cfg.unknown + cfg.rules will be rewritten)...")
+    log(LOG_DEBUG, "Saving mapping file (only cfg.unknown + cfg.rules will be rewritten)...")
 
     -- Read current file as plain text
     local lines = {}
@@ -1178,7 +1197,7 @@ local function save_mappings()
     wf:close()
 
     last_mapping_timestamp = get_file_timestamp(map_file_path)
-    log(LOG_INFO, "Mapping file saved (comments outside cfg.unknown/cfg.rules preserved).")
+    log(LOG_DEBUG, "Mapping file saved (comments outside cfg.unknown/cfg.rules preserved).")
 end
 
 
@@ -1188,7 +1207,7 @@ end
 -----------------------------------------------------
 
 local function scan_processes()
-    log(LOG_INFO, "Scanning running processes...")
+    log(LOG_DEBUG, "Scanning running processes...")
 
     local snapshot = kernel32.CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)
     if snapshot == ffi.cast("HANDLE", -1) then
@@ -1216,8 +1235,9 @@ local function scan_processes()
             local key  = build_display_key_from_full_path(path, exe)
 
             table.insert(processes, {
-                exe = exe,
-                key = key,
+                exe       = exe,
+                key       = key,
+                full_path = path,
             })
         end
     until kernel32.Process32NextW(snapshot, entry) == 0
@@ -1285,10 +1305,42 @@ local function process_is_ignored_name(name)
     return false
 end
 
+
+local function normalize_path(p)
+    p = (p or ""):gsub("\\", "/"):lower()
+    if p ~= "" and p:sub(-1) ~= "/" then p = p .. "/" end
+    return p
+end
+
+local function process_is_whitelisted(proc)
+    local wl = mappings.whitelist or {}
+    if #wl == 0 then
+        return true
+    end
+
+    local full = normalize_path(proc.full_path or "")
+    if full == "" then
+        return false
+    end
+
+    for _, w in ipairs(wl) do
+        local nw = normalize_path(w)
+        if nw ~= "" and full:sub(1, #nw) == nw then
+            return true
+        end
+    end
+    return false
+end
+
 local function process_is_ignored_proc(proc)
+    if not process_is_whitelisted(proc) then
+        log(LOG_TRACE, "Skipping process (not whitelisted): " .. (proc.full_path or proc.key or proc.exe))
+        return true
+    end
     local name = proc.key or proc.exe
     return process_is_ignored_name(name)
 end
+
 
 -- Add all non-ignored processes of this tick to cfg.unknown
 -- using their display key ("Folder/file.exe")
@@ -1306,7 +1358,7 @@ local function update_unknown_bucket(processes)
         local key = proc.key or proc.exe
         local lname = string.lower(key)
 
-        if (not process_is_ignored_base(key)) and (not existing[lname]) then
+        if process_is_whitelisted(proc) and (not process_is_ignored_base(key)) and (not existing[lname]) then
             table.insert(mappings.unknown, key)
             existing[lname] = true
             added_any = true
@@ -1827,7 +1879,7 @@ local function get_twitch_game_id(game_name)
 
     -- If the game is already flagged as unknown, skip all Twitch calls
     if is_unknown_game(original_name) then
-        log(LOG_INFO, string.format(
+        log(LOG_DEBUG, string.format(
             "Game '%s' is in cfg.unknown; skipping Twitch resolution.",
             original_name
         ))
@@ -1845,7 +1897,7 @@ local function get_twitch_game_id(game_name)
         return nil
     end
 
-    log(LOG_INFO, "Resolving Twitch game ID for: " .. original_name)
+    log(LOG_DEBUG, "Resolving Twitch game ID for: " .. original_name)
 
     local headers = {
         ["Client-Id"]    = twitch_client_id,
@@ -1874,7 +1926,7 @@ local function get_twitch_game_id(game_name)
     ------------------------------------------------------------
     local normalized = normalize_dashes_and_trademarks(original_name)
     if normalized ~= "" and normalized ~= original_name then
-        log(LOG_INFO, string.format(
+        log(LOG_DEBUG, string.format(
             "Retrying Twitch resolution with normalized name: '%s' -> '%s'",
             original_name,
             normalized
@@ -1899,7 +1951,7 @@ local function get_twitch_game_id(game_name)
     ------------------------------------------------------------
     local stripped = strip_special_chars(normalized)
     if stripped ~= "" then
-        log(LOG_INFO, string.format(
+        log(LOG_DEBUG, string.format(
             "Falling back to /helix/search/categories with stripped query: '%s' -> '%s'",
             normalized,
             stripped
@@ -2081,12 +2133,12 @@ end
 local function find_rule(processes)
     for _, proc in ipairs(processes) do
         local name_for_ignore = proc.key or proc.exe
-        if not process_is_ignored_name(name_for_ignore) then
+        if not process_is_ignored_proc(proc) then
             log(LOG_DEBUG, "Checking process against rules: " .. name_for_ignore)
             for _, rule in ipairs(mappings.rules or {}) do
                 for _, pname in ipairs(rule.processes or {}) do
                     if proc_matches_mapping_entry(proc, pname) then
-                        log(LOG_INFO, string.format("Process '%s' matched rule '%s'", name_for_ignore, rule.id or "unknown"))
+                        log(LOG_DEBUG, string.format("Process '%s' matched rule '%s'", name_for_ignore, rule.id or "unknown"))
                         return rule
                     end
                 end
@@ -2108,7 +2160,7 @@ local function build_discord_index()
         return
     end
 
-    log(LOG_INFO, "Building Discord detectable index...")
+    log(LOG_DEBUG, "Building Discord detectable index...")
     local by_exe   = {}
     local by_alias = {}
 
@@ -2167,7 +2219,7 @@ local function build_discord_index()
         return c
     end
 
-    log(LOG_INFO, "Discord index built: "
+    log(LOG_DEBUG, "Discord index built: "
         .. tostring(#discord_cache_data) .. " apps, "
         .. tostring(count_keys(by_exe)) .. " exe keys, "
         .. tostring(count_keys(by_alias)) .. " alias keys"
@@ -2230,7 +2282,7 @@ local function find_in_discord(processes)
     local proc_list = {}
     for _, proc in ipairs(processes) do
         local name_for_ignore = proc.key or proc.exe
-        if not process_is_ignored_name(name_for_ignore) then
+        if not process_is_ignored_proc(proc) then
             local base = basename(proc.exe or name_for_ignore)
             local norm = normalize_for_match(base)
             local item = {
@@ -2284,13 +2336,13 @@ local function find_in_discord(processes)
                 elseif #candidates > 1 then
                     -- Very unlikely, but pick the first if multiple path matches exist.
                     chosen = candidates[1]
-                    log(LOG_INFO, string.format(
+                    log(LOG_DEBUG, string.format(
                         "Discord executable '%s' has multiple path matches for process '%s'; using first match.",
                         p.norm, p.raw or p.exe or "?"
                     ))
                 else
                     -- Ambiguous exe name and no path match -> treat as unknown.
-                    log(LOG_INFO, string.format(
+                    log(LOG_DEBUG, string.format(
                         "Discord executable '%s' is used by multiple apps but none match path '%s'; skipping Discord match.",
                         p.norm, p.raw or p.exe or "?"
                     ))
@@ -2676,13 +2728,13 @@ local function execute_once()
 
     local rule = find_rule(processes)
     if rule then
-        log(LOG_INFO, "Applying mapped rule: " .. (rule.id or "unknown"))
+        log(LOG_DEBUG, "Applying mapped rule: " .. (rule.id or "unknown"))
         apply_rule(rule)
         log(LOG_INFO, "=== AutoCategory tick done (rule matched) ===")
         return
     end
 
-    log(LOG_INFO, "No mapping rule matched; checking Discord detectable apps (indexed)...")
+    log(LOG_DEBUG, "No mapping rule matched; checking Discord detectable apps (indexed)...")
     local d_rule = find_in_discord(processes)
     if d_rule then
         log(LOG_INFO, "Applying Discord-detected rule: " .. d_rule.id)
@@ -2833,6 +2885,7 @@ function script_properties()
     obs.obs_property_list_add_int(log_prop, "Error", LOG_ERROR)
     obs.obs_property_list_add_int(log_prop, "Info",  LOG_INFO)
     obs.obs_property_list_add_int(log_prop, "Debug", LOG_DEBUG)
+    obs.obs_property_list_add_int(log_prop, "Trace", LOG_TRACE)
     set_tooltip(log_prop, "How chatty the script should be in the OBS log. Use Debug/Info while testing, Error/Off for normal use.")
 
     local auto_polling_prop = obs.obs_properties_add_bool(
@@ -3000,7 +3053,7 @@ function script_update(settings)
     backport_title        = obs.obs_data_get_bool(settings, "backport_title")
     backport_tags         = obs.obs_data_get_bool(settings, "backport_tags")
 
-    log(LOG_INFO, string.format(
+    log(LOG_DEBUG, string.format(
         "Settings updated (auto_polling=%s, interval=%d ms, log_level=%d, use_pattern=%s, pattern=%s)",
         tostring(auto_polling),
         poll_interval_ms,
@@ -3029,10 +3082,6 @@ function script_update(settings)
     end
 
 end
-
-
-
-
 
 function script_load(settings)
     log(LOG_INFO, "Script loaded; initializing mappings...")
